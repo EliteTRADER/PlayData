@@ -7,5 +7,5 @@ Created on Jul 9, 2015
 from InfluxQuery import InfluxDB
 
 influx = InfluxDB(db_name='Quandl')
-results = influx.interpret('cpi_us*2+5')
+results = influx.interpret('((cpi_us*2+5^2)+0.5)*0.0002')
 print results[0][:5]

@@ -132,18 +132,18 @@ class InfluxDB(object):
         Iterate through parentheses, always interpret the first closing parentheses )
         '''
         e_list = expression_list  
-        if(self._include(e_list, '(') != -1):
-            if(e_list.count('(') != e_list.count(')')):
-                raise ValueError('there are unmatched parentheses')
-            
+        if(self._include(e_list, '(') != -1 and self._include(e_list, ')') != -1):
             close_index = self._include(e_list, ')')
             sub = e_list[:close_index][::-1]
-            open_index = close_index - sub.index('(') - 1
+            open_index = close_index - self._include(sub, '(') - 1
             eval_result = self._calculate(e_list[(open_index+1):close_index])
             new_list = e_list[:open_index] + eval_result + e_list[close_index+1:]
             return(self._parentheses(new_list))
         else:
-            return(self._calculate(e_list))
+            if(self._include(e_list, '(') != -1 or self._include(e_list, ')') != -1):
+                raise ValueError('unmatched parentheses, check the expression')
+            else:
+                return(self._calculate(e_list))
     
     def interpret(self,expression):
         '''
