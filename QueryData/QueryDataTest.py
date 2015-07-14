@@ -6,5 +6,6 @@ Created on Jul 9, 2015
 
 from InfluxQuery import InfluxDB
 
-influx = InfluxDB(db_name='FRED')
-influx.interpret('cpi_us*2+1.5*(wage_us_hours+2)')
+influx = InfluxDB(db_name='Quandl')
+results = influx.interpret('cpi_us*2+5')
+print results[0][:5]
