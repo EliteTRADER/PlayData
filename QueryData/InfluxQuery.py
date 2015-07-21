@@ -5,9 +5,12 @@ Created on Jul 9, 2015
 '''
 
 from influxdb.influxdb08 import DataFrameClient
+from pandas.core.common import isnull
 
 class InfluxDB(object):
-    
+    '''
+    Connect to influxdb and pull/write data
+    '''
     def __init__(self, db_name=None):
         self.db = DataFrameClient('localhost', 8086, 'root', 'root')
         if(db_name != None):
@@ -69,12 +72,26 @@ class InfluxDB(object):
         else:
             return(min(index_1,index_2))
         
-    def _break_expression(self, expression):
+    def _break_expression(self, expression, operators, functions):
         '''
         Break the expression into logical components
         '''
-        operators = ['^','+','-','*','/','(',')']
         expression = expression.replace(' ','')
+        #empty string
+        if(len(expression)==0):
+            return [expression]
+        
+        # interpret functions
+        for func in functions:
+            if func in expression:
+                func_start = expression.find(func)
+                func_end = expression.find(')', func_start)
+                if(expression[func_start-1] in operators):
+                    return (self._break_expression(expression[:func_start], operators, functions)
+                            +[expression[func_start:func_end+1]]
+                            +self._break_expression(expression[func_end+1:], operators, functions))
+                
+        # then deal with the time series, operators and numbers
         results = []
         current_expression = ''
         for char in expression:
@@ -87,17 +104,50 @@ class InfluxDB(object):
         results.append(current_expression)
         results[:] = [item for item in results if item != '']
         
+        return results
+    
+    def _eval_func(self, func):
+        '''
+        Evaluate the function
+        '''
+        function = func[:func.index('(')]
+        if 'lag' == function: #lag the time series by a number of periods. lag(*series*,i) where i is number of period
+            index_start = func.index('(')
+            index_mid = func.index(',')
+            index_end = func.index(')')
+            series = self.query(func[index_start+1:index_mid])
+            periods = float(func[index_mid+1:index_end])
+            return series.shift(periods)
+        elif 'mlag' == function: # shift the time stamp by a number of months. mlag(*series*,i) where i is number of months
+            index_start = func.index('(')
+            index_mid = func.index(',')
+            index_end = func.index(')')
+            series = self.query(func[index_start+1:index_mid])
+            periods = float(func[index_mid+1:index_end])
+            return series.tshift(periods,freq='M').tshift(1,freq='D')
+        else:
+            message = '%s not defined' % func
+            raise ValueError(message)
+        
+        
+    def _convert_expressions(self, expression, operators):
+        '''
+        Convert expressions to data series after they are broken down
+        '''
+        expression[:] = [item for item in expression if item != '']
         converted_results = []
-        for item in results:
-            if item in operators:
+        for item in expression:
+            if '(' in item and ')' in item:
+                converted_results.append(self._eval_func(item))
+            elif item in operators:
                 converted_results.append(item)
             elif self._is_num(item):
                 converted_results.append(float(item))
             else:
                 converted_results.append(self.query(item))
-            
+                
         return converted_results
-
+    
     def _calculate(self, expression_list):
         '''
         Calculate a list of expression elements
@@ -145,10 +195,16 @@ class InfluxDB(object):
             else:
                 return(self._calculate(e_list))
     
-    def interpret(self,expression):
+    def interpret(self, expression):
         '''
         Interpret an expression
         '''
-        interp_expression = self._break_expression(expression)
-        results = self._parentheses(interp_expression)
+        operators = ['^','+','-','*','/','(',')']
+        functions = ['lag', 'mlag']
+        broken_expression = self._break_expression(expression, operators, functions)
+        interp_expression = self._convert_expressions(broken_expression, operators)
+        results = self._parentheses(interp_expression)[0]
+        
+        results = results.loc[isnull(results['value']) != True]
         return results
+    

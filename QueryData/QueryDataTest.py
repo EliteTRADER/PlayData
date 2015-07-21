@@ -7,5 +7,8 @@ Created on Jul 9, 2015
 from InfluxQuery import InfluxDB
 
 influx = InfluxDB(db_name='Quandl')
-results = influx.interpret('((cpi_us*2+5^2)+0.5)*0.0002')
-print results[0][:5]
+expression = '(cpi_us/lag(cpi_us,12)-1)*100'
+results = influx.interpret(expression)
+shifted_results = results.tshift(6,freq='M').tshift(1,freq='D')
+print results[-10:]
+print shifted_results[-10:]
