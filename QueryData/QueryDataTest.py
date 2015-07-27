@@ -5,10 +5,11 @@ Created on Jul 9, 2015
 '''
 
 from InfluxQuery import InfluxDB
+from pandas.core.common import isnull
 
-influx = InfluxDB(db_name='Quandl')
-expression = '(cpi_us/lag(cpi_us,12)-1)*100'
+influx = InfluxDB(db_name='FRED')
+expression = '(avg(wti_spot,M)/lag(avg(wti_spot,M),12)-1)*100'
+#x = influx._close_parentheses('lag(avg(wti_spot,M),12)-1)*100')
+#print 'lag(avg(wti_spot,M),12)-1)*100'[:x+1]
 results = influx.interpret(expression)
-shifted_results = results.tshift(6,freq='M').tshift(1,freq='D')
-print results[-10:]
-print shifted_results[-10:]
+print results[-24:]

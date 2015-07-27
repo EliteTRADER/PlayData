@@ -12,10 +12,28 @@ class InfluxDB(object):
     Connect to influxdb and pull/write data
     '''
     def __init__(self, db_name=None):
-        self.db = DataFrameClient('localhost', 8086, 'root', 'root')
+        self.url = 'localhost'
+        self.port = 8086
+        self.user = 'root'
+        self.password = 'root'
+        self.db_list = [ 'FRED', 'Quandl', 'Econ' ]
+        
+        self.db = DataFrameClient(self.url, self.port, self.user, self.password)
         if(db_name != None):
             self.db_name = db_name
-            self.db.switch_database(db_name)
+        self.db.switch_database(db_name)
+        
+    
+    def _search_db(self,series_name):
+        '''
+        Search the db name for a series name
+        '''
+        for db in self.db_list:
+            temp_db = DataFrameClient(self.url, self.port, self.user, self.password, db)
+            if series_name in temp_db.get_list_series():
+                return db
+        
+        return None
             
     def query(self,series_name,db_name=None):
         '''
@@ -24,15 +42,21 @@ class InfluxDB(object):
         series_name: str
             name of the series, e.g. "CPI_US"
         ------
-        return a pandas DataFrame
+        return a pandas DataFrame with NaN representing missing values
         ------
         '''
         if(db_name != None):
             self.db.switch_database(db_name)
             results = self.db.query('SELECT * FROM %s' % series_name)
         else:
-            results = self.db.query('SELECT * FROM %s' % series_name)
-        return results
+            db_name = self._search_db(series_name)
+            self.db.switch_database(db_name)
+            results = self.db.query('SELECT * FROM %s' % series_name)       
+        
+        if(results['value'].str.contains('.').isnull().sum()!=len(results)):
+            results.loc[results['value']=='.','value'] = None
+        
+        return results.astype(float)
     
     def _is_num(self, s):
         '''
@@ -71,7 +95,25 @@ class InfluxDB(object):
             return(max(index_1,index_2))
         else:
             return(min(index_1,index_2))
-        
+    
+    def _close_parentheses(self,expression):
+        '''
+        Find the closing parentheses to the first opening (
+        ------
+        expression: str
+            str contains an opening (
+        ------
+        '''
+        layer = 0
+        for i, char in enumerate(expression):
+            if(char=='('):
+                layer = layer + 1
+            elif(char==')'):
+                layer = layer - 1
+                if(layer == 0):
+                    return i
+        return -1
+            
     def _break_expression(self, expression, operators, functions):
         '''
         Break the expression into logical components
@@ -85,7 +127,7 @@ class InfluxDB(object):
         for func in functions:
             if func in expression:
                 func_start = expression.find(func)
-                func_end = expression.find(')', func_start)
+                func_end = func_start + self._close_parentheses(expression[func_start:])
                 if(expression[func_start-1] in operators):
                     return (self._break_expression(expression[:func_start], operators, functions)
                             +[expression[func_start:func_end+1]]
@@ -113,18 +155,38 @@ class InfluxDB(object):
         function = func[:func.index('(')]
         if 'lag' == function: #lag the time series by a number of periods. lag(*series*,i) where i is number of period
             index_start = func.index('(')
-            index_mid = func.index(',')
-            index_end = func.index(')')
-            series = self.query(func[index_start+1:index_mid])
+            index_mid = len(func)-func[::-1].index(',')-1
+            index_end = len(func)-func[::-1].index(')')-1
+            try:
+                series = self.query(func[index_start+1:index_mid])
+            except:
+                series = self.interpret(func[index_start+1:index_mid])
             periods = float(func[index_mid+1:index_end])
             return series.shift(periods)
         elif 'mlag' == function: # shift the time stamp by a number of months. mlag(*series*,i) where i is number of months
             index_start = func.index('(')
-            index_mid = func.index(',')
-            index_end = func.index(')')
-            series = self.query(func[index_start+1:index_mid])
+            index_mid = len(func)-func[::-1].index(',')-1
+            index_end = len(func)-func[::-1].index(')')-1
+            try:
+                series = self.query(func[index_start+1:index_mid])
+            except:
+                series = self.interpret(func[index_start+1:index_mid])
             periods = float(func[index_mid+1:index_end])
             return series.tshift(periods,freq='M').tshift(1,freq='D')
+        elif 'avg' == function: #taking the average of time series
+            index_start = func.index('(')
+            index_mid = len(func)-func[::-1].index(',')-1
+            index_end = len(func)-func[::-1].index(')')-1
+            try:
+                series = self.query(func[index_start+1:index_mid])
+            except:
+                series = self.interpret(func[index_start+1:index_mid])
+            freq = func[index_mid+1:index_end]
+            series = series.resample(freq, how='mean')
+            if 'M' in freq:
+                return series.tshift(-1,freq='M').tshift(1,freq='D')
+            else:
+                return series
         else:
             message = '%s not defined' % func
             raise ValueError(message)
@@ -200,7 +262,7 @@ class InfluxDB(object):
         Interpret an expression
         '''
         operators = ['^','+','-','*','/','(',')']
-        functions = ['lag', 'mlag']
+        functions = ['lag', 'mlag', 'avg']
         broken_expression = self._break_expression(expression, operators, functions)
         interp_expression = self._convert_expressions(broken_expression, operators)
         results = self._parentheses(interp_expression)[0]
