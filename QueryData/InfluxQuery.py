@@ -6,6 +6,9 @@ Created on Jul 9, 2015
 
 from influxdb.influxdb08 import DataFrameClient
 from pandas.core.common import isnull
+from pandas.tseries.offsets import DateOffset
+from pandas.core.frame import DataFrame
+from pandas.core.series import Series
 
 class InfluxDB(object):
     '''
@@ -16,14 +19,13 @@ class InfluxDB(object):
         self.port = 8086
         self.user = 'root'
         self.password = 'root'
-        self.db_list = [ 'FRED', 'Quandl', 'Econ' ]
+        self.db_list = [ 'FRED', 'Quandl', 'Econ', 'ChinaData' ]
         
         self.db = DataFrameClient(self.url, self.port, self.user, self.password)
         if(db_name != None):
             self.db_name = db_name
         self.db.switch_database(db_name)
         
-    
     def _search_db(self,series_name):
         '''
         Search the db name for a series name
@@ -128,7 +130,7 @@ class InfluxDB(object):
             if func in expression:
                 func_start = expression.find(func)
                 func_end = func_start + self._close_parentheses(expression[func_start:])
-                if(expression[func_start-1] in operators):
+                if(expression[func_start-1] in operators or func_start == 0):
                     return (self._break_expression(expression[:func_start], operators, functions)
                             +[expression[func_start:func_end+1]]
                             +self._break_expression(expression[func_end+1:], operators, functions))
@@ -187,6 +189,30 @@ class InfluxDB(object):
                 return series.tshift(-1,freq='M').tshift(1,freq='D')
             else:
                 return series
+        elif 'anticum' == function: #reverse the cumulative common to China stats
+            index_start = func.index('(')
+            index_mid = len(func)-func[::-1].index(',')-1
+            index_end = len(func) - func[::-1].index(')')-1
+            new_series = {}
+            try:
+                series = self.query(func[index_start+1:index_mid])
+            except:
+                series = self.interpret(func[index_start+1:index_mid])
+            freq = func[index_mid+1:index_end]
+            if(freq=='M'):
+                freq_m = 1
+            elif(freq=='Q'):
+                freq_m = 3
+                
+            for item in series.iterrows():
+                if item[0].month != freq_m:
+                    prev_date = item[0] + DateOffset(months=-1*freq_m)
+                    prev_date = prev_date.to_period('M').to_timestamp('M')
+                    monthly = item[1]['value']-series.loc[prev_date]
+                    new_series[item[0]] = monthly['value']
+                else:
+                    new_series[item[0]] = item[1]['value']
+            return DataFrame({'value':Series(new_series)})
         else:
             message = '%s not defined' % func
             raise ValueError(message)
@@ -262,7 +288,7 @@ class InfluxDB(object):
         Interpret an expression
         '''
         operators = ['^','+','-','*','/','(',')']
-        functions = ['lag', 'mlag', 'avg']
+        functions = ['lag', 'mlag', 'avg', 'anticum']
         broken_expression = self._break_expression(expression, operators, functions)
         interp_expression = self._convert_expressions(broken_expression, operators)
         results = self._parentheses(interp_expression)[0]

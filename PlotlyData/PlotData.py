@@ -7,9 +7,6 @@ Created on Sep 22, 2015
 from PlotlyAPI import PlotlyAPI
 import sys
 
-for path in sys.path:
-    print path
-'''
 py = PlotlyAPI()
 exp_list = [
         'y1:customs_export_usd_SITC_primary_food+customs_export_usd_SITC_primary_yanjiu;food related export',
@@ -17,4 +14,3 @@ exp_list = [
         ]
 
 py._create_ts(exp_list,'Food','lines')
-'''
